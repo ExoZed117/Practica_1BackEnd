@@ -1,10 +1,14 @@
-// models/Reporte.js
 const mongoose = require('mongoose');
 
 const reporteSchema = new mongoose.Schema({
     id_regional: { type: String, required: true },
-    capacidad_total: { type: Number, required: true },
-    espacio_libre: { type: Number, required: true },
+    nombre_disco: { type: String, default: 'Desconocido' }, // Nuevo
+    tipo_disco: { type: String, default: 'HDD' },           // Nuevo
+    capacidad_total: { type: Number, required: true },      // en GB
+    espacio_usado: { type: Number, required: true },        // en GB
+    espacio_libre: { type: Number, required: true },        // en GB
+    iops: { type: Number, default: 0 },                     // Simulado
+    utilizacion: { type: Number },                          // Porcentaje
     timestamp: { type: Date, default: Date.now },
     estado: { type: String, default: 'Activo' }
 });
