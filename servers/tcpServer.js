@@ -1,72 +1,86 @@
 const net = require('net');
 const Reporte = require('../models/Reporte');
 
-// OBJETO GLOBAL (Mapa de Conexiones Vivas)
+// REQUERIMIENTO 7.1: Mapa global para mantener las conexiones vivas
+// Esto permite que la API de Erika mande comandos al socket correcto
 const nodosActivos = {}; 
 
 const iniciarTCPServer = (puerto) => {
     const server = net.createServer((socket) => {
-        let regionalID = null;
-        console.log('🔗 [TCP] Intento de conexión entrante...');
+        let regionalID = null; // Para identificar quién se desconecta después
+
+        console.log('🔗 [TCP] Intento de conexión detectado.');
 
         socket.on('data', async (data) => {
-            // Tolerancia a fallos: try/catch para evitar caídas por JSON corrupto
+            // REQUERIMIENTO 5.1: Tolerancia a fallos (Try/Catch)
+            // Si un cliente manda basura, el servidor NO se cae
             try {
                 const mensaje = JSON.parse(data.toString());
                 regionalID = mensaje.id_regional;
-                
-                // Adición Automática y Mapa de Conexiones
-                if (!nodosActivos[regionalID]) {
-                    console.log(`🆕 [TCP] Nuevo nodo registrado: ${regionalID}`);
-                }
+
+                // REQUERIMIENTO 7.2: Adición automática al mapa de conexiones
                 nodosActivos[regionalID] = socket;
 
-                // Guiño: Usar la hora del cliente si viene, si no, la del server
-                const horaReporte = mensaje.timestamp ? new Date(mensaje.timestamp) : new Date();
+                // GUIÑO: Usar el timestamp del cliente si existe (Sincronización)
+                const fechaReporte = mensaje.timestamp ? new Date(mensaje.timestamp) : new Date();
 
-                // Cálculos
-                const espacioUsado = mensaje.capacidad_total - mensaje.espacio_libre;
-                const utilizacion = (espacioUsado / mensaje.capacidad_total) * 100;
+                // Lógica de cálculos internos para el reporte
+                const capacidad = mensaje.capacidad_total || 0;
+                const libre = mensaje.espacio_libre || 0;
+                const usado = capacidad - libre;
+                
+                // Cálculo de utilización: 
+                // $$Utilización = \frac{Capacidad - Libre}{Capacidad} \times 100$$
+                const pctUtilizacion = capacidad > 0 ? (usado / capacidad) * 100 : 0;
 
-                // Persistencia en DB
+                // REQUERIMIENTO 5.2: Persistencia en MongoDB Atlas
+                // Creamos un registro nuevo para mantener el historial (Growth Rate)
                 await Reporte.create({
                     id_regional: regionalID,
                     nombre_disco: mensaje.nombre_disco || 'Disco_Principal',
                     tipo_disco: mensaje.tipo_disco || 'SSD',
-                    capacidad_total: mensaje.capacidad_total,
-                    espacio_usado: espacioUsado,
-                    espacio_libre: mensaje.espacio_libre,
+                    capacidad_total: capacidad,
+                    espacio_usado: usado,
+                    espacio_libre: libre,
                     iops: mensaje.iops || Math.floor(Math.random() * 500),
-                    utilizacion: parseFloat(utilizacion.toFixed(2)),
-                    timestamp: horaReporte,
+                    utilizacion: parseFloat(pctUtilizacion.toFixed(2)),
+                    timestamp: fechaReporte,
                     estado: 'Activo'
                 });
 
-                console.log(`📥 [TCP] Reporte guardado de ${regionalID}`);
-                
-                // Confirmación al cliente (ACK)
-                socket.write(JSON.stringify({ status: 'ACK: Nodo registrado', timestamp: new Date() }));
+                console.log(`📥 [TCP] Datos guardados de: ${regionalID}`);
+
+                // REQUERIMIENTO 7.1: Confirmación de recepción (ACK)
+                socket.write(JSON.stringify({ 
+                    status: 'ACK', 
+                    msg: 'Reporte procesado correctamente',
+                    server_time: new Date() 
+                }));
 
             } catch (err) {
-                console.error('❌ [TCP] Error procesando JSON (Ignorado):', err.message);
+                console.error('❌ [TCP] Error procesando paquete de datos:', err.message);
+                // No cerramos el socket, solo ignoramos el paquete corrupto
             }
         });
 
-        // Gestión de Desconexión
+        // Gestión de errores de red
         socket.on('error', (err) => {
-            console.error(`⚠️ [TCP] Error en nodo ${regionalID || 'Desconocido'}:`, err.message);
-            if (regionalID) delete nodosActivos[regionalID];
+            console.error(`⚠️ [TCP] Error de red en ${regionalID || 'Cliente'}:`, err.message);
         });
 
+        // Limpieza al cerrar la conexión
         socket.on('close', () => {
-            console.log(`🔴 [TCP] Conexión cerrada con ${regionalID || 'Desconocido'}`);
-            if (regionalID) delete nodosActivos[regionalID];
+            if (regionalID) {
+                console.log(`🔴 [TCP] Conexión cerrada con: ${regionalID}`);
+                delete nodosActivos[regionalID]; // Lo sacamos del mapa de activos
+            }
         });
     });
 
     server.listen(puerto, () => {
-        console.log(`🚀 Servidor TCP (Sockets) escuchando en puerto ${puerto}`);
+        console.log(`🚀 [TCP] Servidor de Sockets escuchando en puerto ${puerto}`);
     });
 };
 
+// Exportamos tanto la función de inicio como el mapa de nodos activos
 module.exports = { iniciarTCPServer, nodosActivos };
